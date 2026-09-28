@@ -1,0 +1,351 @@
+/* ===================================================================
+   ESTE ARQUIVO VAI NO ARQUIVO CHAMADO  "Script"  DO APPS SCRIPT
+   (criado como arquivo HTML). NAO VAI no "Index" nem no "Styles".
+   Aqui so tem a logica: situacao da data, validacao e confirmacao.
+   =================================================================== */
+
+(function () {
+  'use strict';
+
+  var CONFIG = window.CONFIG || {};
+  var MAX_DIAS = Number(CONFIG.maxDias) || 365;
+
+  var estado = {
+    dados: null,      // { hoje, max, reservas: {iso: nome}, bloqueios: {iso: motivo} }
+    item: null,       // data escolhida e DISPONÍVEL
+    atualizacao: 0,   // descarta respostas de atualizações antigas
+    enviando: false
+  };
+
+  var el = {};
+
+  /* -------------------------------------------------- *
+   *  Conexão com o Google Apps Script                   *
+   * -------------------------------------------------- */
+
+  function temBackend() {
+    return typeof google !== 'undefined' && google.script && google.script.run;
+  }
+
+  function chamar(metodo, payload, deuCerto, deuErro) {
+    if (!temBackend()) {
+      window.setTimeout(function () { deuCerto(simular(metodo, payload)); }, 600);
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(deuCerto)
+      .withFailureHandler(function () {
+        deuErro('Não foi possível falar com a planilha agora. Verifique a internet e tente de novo.');
+      })[metodo](payload);
+  }
+
+  /* -------------------------------------------------- *
+   *  Simulação (só quando abre o arquivo fora do Google) *
+   * -------------------------------------------------- */
+
+  var MOCK = null;
+
+  function mockDados() {
+    if (!MOCK) {
+      var hoje = hojeISO();
+      MOCK = { hoje: hoje, max: somarDias(hoje, MAX_DIAS), reservas: {}, bloqueios: {} };
+      MOCK.reservas[somarDias(hoje, 5)] = 'Maria Fernanda Souza';
+      MOCK.bloqueios[somarDias(hoje, 8)] = 'troca de quarto no hospital';
+    }
+    return JSON.parse(JSON.stringify(MOCK));
+  }
+
+  function simular(metodo, payload) {
+    if (metodo === 'obterDados') return mockDados();
+    if (metodo === 'reservar') {
+      estado.dados = mockDados();
+      var atual = situacao(payload.data);
+      if (atual.status !== 'DISPONIVEL') return { ok: false, mensagem: atual.motivo, item: atual };
+      MOCK.reservas[payload.data] = payload.nome;
+      atual.status = 'RESERVADA'; atual.nome = payload.nome;
+      return { ok: true, nome: payload.nome, item: atual };
+    }
+  }
+
+  /* -------------------------------------------------- *
+   *  Datas                                              *
+   * -------------------------------------------------- */
+
+  function dois(n) { return (n < 10 ? '0' : '') + n; }
+
+  function paraISO(d) {
+    return d.getFullYear() + '-' + dois(d.getMonth() + 1) + '-' + dois(d.getDate());
+  }
+
+  function deISO(iso) {
+    var p = String(iso).split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+
+  function hojeISO() { return paraISO(new Date()); }
+
+  function somarDias(iso, n) {
+    var d = deISO(iso);
+    d.setDate(d.getDate() + n);
+    return paraISO(d);
+  }
+
+  function rotuloDe(iso) {
+    var dias = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira',
+                'quinta-feira', 'sexta-feira', 'sábado'];
+    var meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    var d = deISO(iso);
+    return dias[d.getDay()] + ', ' + d.getDate() + ' de ' + meses[d.getMonth()] + ' de ' + d.getFullYear();
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /* -------------------------------------------------- *
+   *  Telas                                              *
+   * -------------------------------------------------- */
+
+  function mostrar(qual) {
+    el.etapaData.hidden = qual !== 'data';
+    el.etapaNome.hidden = qual !== 'nome';
+    el.etapaOk.hidden   = qual !== 'ok';
+    el.erroNome.hidden  = true;
+    el.erroData.hidden  = true;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  function mostrarErro(msg, alvo) {
+    alvo = alvo || el.erroNome;
+    alvo.textContent = msg;
+    alvo.hidden = false;
+    alvo.scrollIntoView({ block: 'nearest' });
+  }
+
+  function aplicarConfig() {
+    if (CONFIG.titulo) {
+      el.titulo.textContent = CONFIG.titulo;
+      document.title = CONFIG.titulo;
+    }
+    el.subtitulo.textContent = CONFIG.subtitulo || '';
+    el.subtitulo.hidden = !CONFIG.subtitulo;
+
+    if (CONFIG.paciente) {
+      el.paciente.textContent = 'Para ' + CONFIG.paciente;
+      el.paciente.hidden = false;
+    }
+
+    el.okInstrucoes.textContent = CONFIG.instrucoes || '';
+    el.okInstrucoes.hidden = !CONFIG.instrucoes;
+
+    el.okAviso.textContent = CONFIG.aviso || '';
+    el.okAviso.hidden = !CONFIG.aviso;
+
+    el.rodapeHospital.textContent = CONFIG.hospital || '';
+    el.rodape.hidden = !CONFIG.hospital;
+
+    estado.dados = CONFIG.dados || null;
+    el.data.min = estado.dados ? estado.dados.hoje : hojeISO();
+    el.data.max = estado.dados ? estado.dados.max : somarDias(hojeISO(), MAX_DIAS);
+  }
+
+  /* -------------------------------------------------- *
+   *  Etapa 1 — consulta da data                         *
+   * -------------------------------------------------- */
+
+  var TIPO_POR_STATUS = {
+    DISPONIVEL: 'livre', RESERVADA: 'ocupada',
+    BLOQUEADA: 'bloqueada', FORA: 'bloqueada', PASSADA: 'passada'
+  };
+
+  /** Mesmas regras do servidor, usando a lista que já veio com a página */
+  function situacao(iso) {
+    var d = estado.dados;
+    var item = { data: iso, rotulo: rotuloDe(iso), status: 'DISPONIVEL', motivo: '', nome: '' };
+    if (iso < d.hoje) {
+      item.status = 'PASSADA';
+      item.motivo = 'Essa data já passou. Escolha uma noite a partir de hoje.';
+    } else if (iso > d.max) {
+      item.status = 'FORA';
+      item.motivo = 'Só dá para reservar com até ' + MAX_DIAS + ' dias de antecedência. Confira o ano da data.';
+    } else if (d.reservas[iso]) {
+      item.status = 'RESERVADA';
+      item.nome = d.reservas[iso];
+      item.motivo = 'Esta noite já está com ' + item.nome + '.';
+    } else if (d.bloqueios.hasOwnProperty(iso)) {
+      item.status = 'BLOQUEADA';
+      item.motivo = d.bloqueios[iso] ? 'Indisponível: ' + d.bloqueios[iso] : 'Esta noite não está disponível.';
+    }
+    return item;
+  }
+
+  function pintar(tipo, titulo, texto) {
+    el.resultado.className = 'resultado ' + tipo;
+    el.resultado.innerHTML = '<b>' + esc(titulo) + '</b>' + (texto ? '<span>' + esc(texto) + '</span>' : '');
+    el.resultado.hidden = false;
+  }
+
+  function atualizarBotao() {
+    el.btnProximo.disabled = !estado.item;
+  }
+
+  /** Mostra na hora a situação da data que está no campo */
+  function mostrarSituacao() {
+    var iso = el.data.value;
+    estado.item = null;
+
+    if (!iso || !estado.dados) {
+      el.resultado.hidden = true;
+      atualizarBotao();
+      return;
+    }
+
+    var it = situacao(iso);
+    if (it.status === 'DISPONIVEL') {
+      estado.item = it;
+      pintar('livre', it.rotulo, 'Noite livre. Toque em Continuar para reservar.');
+    } else {
+      pintar(TIPO_POR_STATUS[it.status], it.rotulo, it.motivo);
+    }
+    atualizarBotao();
+  }
+
+  /** Busca a lista mais recente na planilha, sem travar a tela */
+  function atualizarDados() {
+    var minha = ++estado.atualizacao;
+    chamar('obterDados', null, function (dados) {
+      if (minha !== estado.atualizacao || !dados) return;
+      estado.dados = dados;
+      el.data.min = dados.hoje;
+      el.data.max = dados.max;
+      if (!el.etapaData.hidden) mostrarSituacao();
+    }, function () { /* segue com a lista que já tem; o servidor confere na reserva */ });
+  }
+
+  function aoMudarData() {
+    el.erroData.hidden = true;
+    mostrarSituacao();
+    if (el.data.value) atualizarDados();
+  }
+
+  /* -------------------------------------------------- *
+   *  Etapa 2 — nome                                     *
+   * -------------------------------------------------- */
+
+  function irParaNome() {
+    if (!estado.item) {
+      mostrarErro('Escolha uma data livre antes de continuar.', el.erroData);
+      return;
+    }
+    el.resumoNomeData.textContent = estado.item.rotulo;
+    mostrar('nome');
+    el.nome.focus();
+  }
+
+  function enviar(evento) {
+    evento.preventDefault();
+    if (estado.enviando) return;
+
+    var nome = el.nome.value.replace(/\s+/g, ' ').trim();
+    if (nome.length < 2) { mostrarErro('Escreva seu nome para reservar.'); el.nome.focus(); return; }
+    if (!estado.item) { mostrar('data'); return; }
+
+    estado.enviando = true;
+    el.btnEnviar.disabled = true;
+    el.btnEnviar.textContent = 'Confirmando…';
+    el.erroNome.hidden = true;
+
+    chamar('reservar', { nome: nome, data: estado.item.data }, function (resposta) {
+      liberarEnvio();
+
+      if (!resposta || !resposta.ok) {
+        var msg = (resposta && resposta.mensagem) || 'Não foi possível confirmar agora. Tente novamente.';
+        if (resposta && resposta.item) {
+          // a data deixou de estar livre enquanto a pessoa preenchia: volta e mostra quem pegou
+          if (resposta.item.status === 'RESERVADA') estado.dados.reservas[resposta.item.data] = resposta.item.nome;
+          mostrar('data');
+          mostrarSituacao();
+          atualizarDados();
+          mostrarErro('Não deu tempo: ' + msg.charAt(0).toLowerCase() + msg.slice(1) +
+                      ' Escolha outra data.', el.erroData);
+        } else {
+          mostrarErro(msg);
+        }
+        return;
+      }
+
+      if (estado.dados) estado.dados.reservas[resposta.item.data] = resposta.nome;
+      el.okNome.textContent = resposta.nome;
+      el.okQuem.textContent = resposta.nome;
+      el.okData.textContent = resposta.item.rotulo;
+      el.okPaciente.textContent = CONFIG.paciente || '';
+      el.okPaciente.parentNode.hidden = !CONFIG.paciente;
+      el.nome.value = '';
+      el.contador.textContent = '0/80';
+      mostrar('ok');
+    }, function (msg) {
+      liberarEnvio();
+      mostrarErro(msg);
+    });
+  }
+
+  function liberarEnvio() {
+    estado.enviando = false;
+    el.btnEnviar.disabled = false;
+    el.btnEnviar.textContent = 'Confirmar minha noite';
+  }
+
+  function outra() {
+    el.nome.value = '';
+    el.data.value = '';
+    estado.item = null;
+    el.resultado.hidden = true;
+    atualizarBotao();
+    mostrar('data');
+    atualizarDados();
+  }
+
+  /* -------------------------------------------------- *
+   *  Ligações                                           *
+   * -------------------------------------------------- */
+
+  function ligar() {
+    el.data.addEventListener('change', aoMudarData);
+    el.data.addEventListener('input', mostrarSituacao);
+
+    el.nome.addEventListener('input', function () {
+      el.contador.textContent = el.nome.value.length + '/80';
+      if (!el.erroNome.hidden && el.nome.value.trim().length >= 2) el.erroNome.hidden = true;
+    });
+
+    el.btnProximo.addEventListener('click', irParaNome);
+    el.btnVoltar.addEventListener('click', function () { mostrar('data'); });
+    el.btnOutra.addEventListener('click', outra);
+    el.formNome.addEventListener('submit', enviar);
+  }
+
+  function pegar(id) { return document.getElementById(id); }
+
+  function iniciar() {
+    [
+      'titulo', 'subtitulo', 'paciente', 'etapaData', 'etapaNome', 'etapaOk',
+      'data', 'resultado', 'erroData', 'btnProximo', 'resumoNomeData',
+      'btnVoltar', 'btnOutra', 'formNome', 'nome', 'contador', 'erroNome', 'btnEnviar',
+      'okNome', 'okQuem', 'okData', 'okPaciente', 'okInstrucoes', 'okAviso',
+      'rodape', 'rodapeHospital'
+    ].forEach(function (id) { el[id] = pegar(id); });
+
+    aplicarConfig();
+    ligar();
+    if (!estado.dados) atualizarDados();   // prévia fora do Google: usa a simulação
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', iniciar);
+  } else {
+    iniciar();
+  }
+})();

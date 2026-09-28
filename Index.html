@@ -1,0 +1,122 @@
+<!-- ==================================================================
+     ESTE ARQUIVO VAI NO ARQUIVO CHAMADO  "Index"  DO APPS SCRIPT
+     NAO VAI no "Styles" e NAO VAI no "Script".
+     E a pagina do formulario. As duas linhas com include() no fim
+     NAO podem ser apagadas.
+     ================================================================== -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>Escala de Permanência</title>
+  <!-- O include do visual precisa ficar DENTRO de uma tag style, senao o
+       navegador mostra o codigo CSS como texto em vez de aplicar. -->
+  <style><?!= include('Styles'); ?></style>
+</head>
+<body>
+
+<div class="fundo"></div>
+
+<main class="pagina">
+
+  <!-- ============ CABEÇALHO ============ -->
+  <header class="topo">
+    <h1 id="titulo">Escala de Permanência</h1>
+    <p class="subtitulo" id="subtitulo"></p>
+    <p class="paciente" id="paciente" hidden></p>
+  </header>
+
+  <!-- ============ ETAPA 1: ESCOLHER A DATA ============ -->
+  <section class="cartao" id="etapaData">
+
+    <h2 class="titulo-etapa"><span class="passo">1</span> Qual noite você quer ficar?</h2>
+    <p class="ajuda">Escolha a data e veja na hora se ela está livre.</p>
+
+    <div class="campo">
+      <label for="data">Data</label>
+      <input type="date" id="data" name="data">
+    </div>
+
+    <div class="resultado" id="resultado" hidden aria-live="polite"></div>
+
+    <p class="erro" id="erroData" hidden role="alert"></p>
+
+    <button class="primario" id="btnProximo" type="button" disabled>Continuar</button>
+  </section>
+
+  <!-- ============ ETAPA 2: NOME ============ -->
+  <section class="cartao" id="etapaNome" hidden>
+    <button class="voltar" id="btnVoltar" type="button">← Trocar a data</button>
+
+    <h2 class="titulo-etapa"><span class="passo">2</span> Escreva seu nome</h2>
+    <p class="ajuda">Só o nome. Não precisa deixar e-mail nem telefone.</p>
+
+    <div class="resumo grande">
+      <span class="resumo-rotulo">Data escolhida</span>
+      <strong id="resumoNomeData"></strong>
+    </div>
+
+    <form id="formNome" novalidate>
+      <div class="campo">
+        <label for="nome">Seu nome completo</label>
+        <input type="text" id="nome" name="nome" autocomplete="name"
+               placeholder="Ex.: Maria Fernanda Souza" maxlength="80" required>
+        <small class="dica" id="contador">0/80</small>
+      </div>
+
+      <p class="erro" id="erroNome" hidden role="alert"></p>
+
+      <button class="primario" type="submit" id="btnEnviar">Confirmar minha noite</button>
+    </form>
+  </section>
+
+  <!-- ============ ETAPA 3: CONFIRMAÇÃO ============ -->
+  <section class="cartao confirmacao" id="etapaOk" hidden>
+    <div class="selo-ok">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+    </div>
+
+    <h2>Reserva confirmada</h2>
+    <p class="confirma-nome"><span id="okNome"></span>, a noite é sua.</p>
+
+    <div class="comprovante">
+      <div class="linha">
+        <span>Paciente</span>
+        <strong id="okPaciente"></strong>
+      </div>
+      <div class="linha destaque">
+        <span>Data</span>
+        <strong id="okData"></strong>
+      </div>
+      <div class="linha">
+        <span>Reservado por</span>
+        <strong id="okQuem"></strong>
+      </div>
+    </div>
+
+    <p class="instrucoes" id="okInstrucoes"></p>
+    <p class="aviso" id="okAviso" hidden></p>
+
+    <p class="dica-final">Mostre esta tela para quem organiza a escala.</p>
+
+    <button class="secundario" id="btnOutra" type="button">Reservar outra data</button>
+  </section>
+
+  <footer class="rodape" id="rodape" hidden>
+    <span id="rodapeHospital"></span>
+  </footer>
+
+</main>
+
+<!-- A lógica entra DENTRO da tag script de propósito: assim o sinal
+     "menor que" das expressões regulares do JavaScript é tratado como
+     texto e não como início de tag HTML. Fora daqui o navegador tentaria
+     ler trechos como se fossem etiquetas e a página inteira quebraria. -->
+<script>
+  window.CONFIG = <?!= configJson ?>;
+  <?!= include('Script'); ?>
+</script>
+
+</body>
+</html>
